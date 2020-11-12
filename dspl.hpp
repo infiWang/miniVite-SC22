@@ -51,6 +51,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <map>
+#include <utility>
 
 #include <mpi.h>
 #include <omp.h>
@@ -76,6 +77,20 @@ const int VertexTag         = 2;
 const int CommunityTag      = 3;
 const int CommunitySizeTag  = 4;
 const int CommunityDataTag  = 5;
+
+// print edge stat on each iteration
+// uncomment this line to enable
+#undef EDGE_STAT
+
+#ifdef EDGE_STAT
+enum EdgeCase {
+  EDGE_CASE_SAME_COMMUNITY,
+  EDGE_CASE_HIGH_DEGREE,
+  EDGE_CASE_LOW_DEGREE,
+  EDGE_CASE_NUM
+};
+unsigned long casesCounter[EDGE_CASE_NUM];
+#endif
 
 static MPI_Datatype commType;
 
@@ -171,16 +186,18 @@ void distInitLouvain(const Graph &dg, std::vector<GraphElem> &pastComm,
   distInitComm(pastComm, currComm, base);
 } // distInitLouvain
 
-GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphElem> &clmap, const std::vector<GraphWeight> &counter,
+// OPTIMIZATION:
+// counter array is merged into clmap
+// ccVal refers to counter[0] in original code
+GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphWeight> &clmap,
 			  const GraphWeight selfLoop, const std::vector<Comm> &localCinfo, 
 			  const std::map<GraphElem,Comm> &remoteCinfo, const GraphWeight vDegree, 
                           const GraphElem currSize, const GraphWeight currDegree, const GraphElem currComm,
-			  const GraphElem base, const GraphElem bound, const GraphWeight constant)
+			  const GraphElem base, const GraphElem bound, const GraphWeight constant, const GraphWeight ccVal)
 {
-  std::unordered_map<GraphElem, GraphElem>::const_iterator storedAlready;
   GraphElem maxIndex = currComm;
   GraphWeight curGain = 0.0, maxGain = 0.0;
-  GraphWeight eix = static_cast<GraphWeight>(counter[0]) - static_cast<GraphWeight>(selfLoop);
+  GraphWeight eix = static_cast<GraphWeight>(ccVal) - static_cast<GraphWeight>(selfLoop);
 
   GraphWeight ax = currDegree - vDegree;
   GraphWeight eiy = 0.0, ay = 0.0;
@@ -188,38 +205,40 @@ GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphElem> &clmap,
   GraphElem maxSize = currSize; 
   GraphElem size = 0;
 
-  storedAlready = clmap.begin();
-#ifdef DEBUG_PRINTF  
-  assert(storedAlready != clmap.end());
-#endif
-  do {
-      if (currComm != storedAlready->first) {
+  // NOTE:
+  // rewrite in c++ 17
+  // storedAlready is rewritten to for-each statement
+  for (auto [tcomm, tweight] : clmap) {
+    // NOTE:
+    // currComm != tcomm is always true
+    // because this case is handled in distBuildLocalMapCounter
 
-          // is_local, direct access local info
-          if ((storedAlready->first >= base) && (storedAlready->first < bound)) {
-              ay = localCinfo[storedAlready->first-base].degree;
-              size = localCinfo[storedAlready->first - base].size;   
-          }
-          else {
-              // is_remote, lookup map
-              std::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(storedAlready->first);
-              ay = citer->second.degree;
-              size = citer->second.size; 
-          }
+    // is_local, direct access local info
+    if ((tcomm >= base) && (tcomm < bound)) {
+        ay = localCinfo[tcomm - base].degree;
+        size = localCinfo[tcomm - base].size;   
+    }
+    else {
+        // is_remote, lookup map
+        std::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(tcomm);
+        ay = citer->second.degree;
+        size = citer->second.size; 
+    }
 
-          eiy = counter[storedAlready->second];
+    // NOTE:
+    // counter is merged into clmap
+    // so counter[storedAlready->second] is tweight
+    eiy = tweight;
 
-          curGain = 2.0 * (eiy - eix) - 2.0 * vDegree * (ay - ax) * constant;
+    curGain = 2.0 * (eiy - eix) - 2.0 * vDegree * (ay - ax) * constant;
 
-          if ((curGain > maxGain) ||
-                  ((curGain == maxGain) && (curGain != 0.0) && (storedAlready->first < maxIndex))) {
-              maxGain = curGain;
-              maxIndex = storedAlready->first;
-              maxSize = size;
-          }
-      }
-      storedAlready++;
-  } while (storedAlready != clmap.end());
+    if ((curGain > maxGain) ||
+            ((curGain == maxGain) && (curGain != 0.0) && (tcomm < maxIndex))) {
+        maxGain = curGain;
+        maxIndex = tcomm;
+        maxSize = size;
+    }
+  }
 
   if ((maxSize == 1) && (currSize == 1) && (maxIndex > currComm))
     maxIndex = currComm;
@@ -227,15 +246,20 @@ GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphElem> &clmap,
   return maxIndex;
 } // distGetMaxIndex
 
-GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std::unordered_map<GraphElem, GraphElem> &clmap, 
-				   std::vector<GraphWeight> &counter, const Graph &g, 
+// OPTIMIZATION:
+// counter array is merged into clmap
+// ccVal is written into
+GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std::unordered_map<GraphElem, GraphWeight> &clmap, 
+				   const Graph &g, 
                                    const std::vector<GraphElem> &currComm, 
                                    const std::unordered_map<GraphElem, GraphElem> &remoteComm,
-	                           const GraphElem vertex, const GraphElem base, const GraphElem bound)
+	                           const GraphElem vertex, const GraphElem base, const GraphElem bound, const GraphElem cc, GraphWeight &ccVal)
 {
-  GraphElem numUniqueClusters = 1L;
+  // NOTE:
+  // numUniqueClusters is unused
+
   GraphWeight selfLoop = 0;
-  std::unordered_map<GraphElem, GraphElem>::const_iterator storedAlready;
+  std::unordered_map<GraphElem, GraphWeight>::iterator storedAlready;
 
   for (GraphElem j = e0; j < e1; j++) {
         
@@ -259,19 +283,330 @@ GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std
       tcomm = iter->second;
     }
 
+    // NOTE:
+    // when tcomm == cc, handle it directly
+    if (tcomm == cc) {
+#ifdef EDGE_STAT
+#pragma omp atomic update
+      casesCounter[EDGE_CASE_SAME_COMMUNITY]++;
+#endif
+      ccVal += weight;
+      continue;
+    }
+
+#ifdef EDGE_STAT
+#pragma omp atomic update
+    casesCounter[EDGE_CASE_HIGH_DEGREE]++;
+#endif
+
     storedAlready = clmap.find(tcomm);
     
+    // NOTE:
+    // clmap and counter are merged
+    // so `counter[storedAlready->second]` is `storedAlready->second`
     if (storedAlready != clmap.end())
-      counter[storedAlready->second] += weight;
-    else {
-        clmap.insert(std::unordered_map<GraphElem, GraphElem>::value_type(tcomm, numUniqueClusters));
-        counter.push_back(weight);
-        numUniqueClusters++;
-    }
+      storedAlready->second += weight;
+    else
+      clmap.insert(std::unordered_map<GraphElem, GraphWeight>::value_type(
+          tcomm, weight));
   }
 
   return selfLoop;
 } // distBuildLocalMapCounter
+
+// OPTIMIZATION:
+// Sort based optimization of `distGetMaxIndex`
+// `clmap` should be a sorted list of [tcomm, tweight]
+GraphElem distGetMaxIndexSort(
+    const std::vector<std::pair<GraphElem, GraphWeight>> &clmap,
+    const GraphWeight selfLoop, const std::vector<Comm> &localCinfo,
+    const std::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
+    const GraphElem currSize, const GraphWeight currDegree,
+    const GraphElem currComm, const GraphElem base, const GraphElem bound,
+    const GraphWeight constant, const GraphWeight ccVal) {
+  // NOTE:
+  // do nothing when clmap is empty
+  // there is no other community connected
+  if (clmap.empty())
+    return currComm;
+
+  GraphElem maxIndex = currComm;
+  GraphWeight curGain = 0.0, maxGain = 0.0;
+  GraphWeight eix =
+      static_cast<GraphWeight>(ccVal) - static_cast<GraphWeight>(selfLoop);
+
+  GraphWeight ax = currDegree - vDegree;
+  GraphWeight eiy = 0.0, ay = 0.0;
+
+  GraphElem maxSize = currSize;
+  GraphElem size = 0;
+
+  // NOTE:
+  // rewrite using c++17
+  // after sorted, we can merge weights of
+  // consecutive elements with the same tcomm
+  // here we take the first element
+  auto [tcomm, tweight] = clmap[0];
+  
+  // update max index using current tcomm and tweight
+  auto update = [&]() {
+    // is_local, direct access local info
+    if ((tcomm >= base) && (tcomm < bound)) {
+      ay = localCinfo[tcomm - base].degree;
+      size = localCinfo[tcomm - base].size;
+    } else {
+      // is_remote, lookup map
+      std::map<GraphElem, Comm>::const_iterator citer = remoteCinfo.find(tcomm);
+      ay = citer->second.degree;
+      size = citer->second.size;
+    }
+
+    eiy = tweight;
+
+    curGain = 2.0 * (eiy - eix) - 2.0 * vDegree * (ay - ax) * constant;
+
+    if ((curGain > maxGain) ||
+        ((curGain == maxGain) && (curGain != 0.0) && (tcomm < maxIndex))) {
+      maxGain = curGain;
+      maxIndex = tcomm;
+      maxSize = size;
+    }
+  };
+
+  // NOTE:
+  // scan from second element(index=1)
+  for (int i = 1; i < clmap.size(); ++i) {
+    auto [scanningComm, scanningWeight] = clmap[i];
+    // when scanningComm differs from previous one, call update()
+    if (scanningComm != tcomm) {
+      update();
+      tcomm = scanningComm;
+      tweight = scanningWeight;
+    } else {
+      // and sum up weights when tcomm remains unchanged
+      tweight += scanningWeight;
+    }
+  }
+  // handle the remaining elements
+  update();
+
+  if ((maxSize == 1) && (currSize == 1) && (maxIndex > currComm))
+    maxIndex = currComm;
+
+  return maxIndex;
+} // distGetMaxIndex
+
+// OPTIMIZATION:
+// Sort based optimization of `distBuildLocalMapCounter`
+GraphWeight distBuildLocalMapCounterSort(
+    const GraphElem e0, const GraphElem e1,
+    std::vector<std::pair<GraphElem, GraphWeight>> &clmap, const Graph &g,
+    const std::vector<GraphElem> &currComm,
+    const std::unordered_map<GraphElem, GraphElem> &remoteComm,
+    const GraphElem vertex, const GraphElem base, const GraphElem bound,
+    const GraphElem cc, GraphWeight &ccVal) {
+  GraphWeight selfLoop = 0;
+
+  for (GraphElem j = e0; j < e1; j++) {
+
+    const Edge &edge = g.get_edge(j);
+    const GraphElem &tail_ = edge.tail_;
+    const GraphWeight &weight = edge.weight_;
+    GraphElem tcomm;
+
+    if (tail_ == vertex + base)
+      selfLoop += weight;
+
+    // is_local, direct access local std::vector<GraphElem>
+    if ((tail_ >= base) && (tail_ < bound))
+      tcomm = currComm[tail_ - base];
+    else { // is_remote, lookup map
+      std::unordered_map<GraphElem, GraphElem>::const_iterator iter =
+          remoteComm.find(tail_);
+
+#ifdef DEBUG_PRINTF
+      assert(iter != remoteComm.end());
+#endif
+      tcomm = iter->second;
+    }
+
+    if (tcomm == cc) {
+#ifdef EDGE_STAT
+#pragma omp atomic update
+      casesCounter[EDGE_CASE_SAME_COMMUNITY]++;
+#endif
+      ccVal += weight;
+      continue;
+    }
+
+#ifdef EDGE_STAT
+#pragma omp atomic update
+    casesCounter[EDGE_CASE_HIGH_DEGREE]++;
+#endif
+
+    // NOTE:
+    // we don't dedup elements by tcomm
+    // leave it for sorting
+    clmap.emplace_back(tcomm, weight);
+  }
+  // NOTE:
+  // actual sort after constructing `clmap`
+  std::sort(clmap.begin(), clmap.end(),
+            [](const auto &a, const auto &b) { return a.first < b.first; });
+
+  return selfLoop;
+} // distBuildLocalMapCounter
+
+// OPTIMIZATION:
+// An on-stack implementation to replace hashmap
+// implement the partial interface of std::unordered_map
+template <typename K, typename V, int N, int R = 1> struct fakemap {
+  static constexpr int radix = R;
+  std::array<std::array<std::pair<K, V>, N>, R> storage;
+  std::array<int, R> length = {};
+  std::pair<K, V> *find(const K &k) {
+    int b = k % R;
+    for (int i = 0; i < length[b]; ++i)
+      if (storage[b][i].first == k)
+        return &storage[b][i];
+    return nullptr;
+  }
+  void emplace(const K &k, const V &v) {
+    int b = k % R;
+    storage[b][length[b]++] = {k, v};
+  }
+};
+
+template <int N, int R>
+GraphElem distGetMaxIndexSmall(
+    const fakemap<GraphElem, GraphWeight, N, R> &clmap,
+    const GraphWeight selfLoop, const std::vector<Comm> &localCinfo,
+    const std::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
+    const GraphElem currSize, const GraphWeight currDegree,
+    const GraphElem currComm, const GraphElem base, const GraphElem bound,
+    const GraphWeight constant, const GraphWeight ccVal) {
+  GraphElem maxIndex = currComm;
+  GraphWeight curGain = 0.0, maxGain = 0.0;
+  GraphWeight eix =
+      static_cast<GraphWeight>(ccVal) - static_cast<GraphWeight>(selfLoop);
+
+  GraphWeight ax = currDegree - vDegree;
+  GraphWeight eiy = 0.0, ay = 0.0;
+
+  GraphElem maxSize = currSize;
+  GraphElem size = 0;
+
+  // NOTE:
+  // there are `R` buckets in the fakemap
+  for (int i = 0; i < R; ++i)
+    for (int j = 0; j < clmap.length[i]; ++j) {
+      auto [tcomm, tweight] = clmap.storage[i][j];
+      // is_local, direct access local info
+      if ((tcomm >= base) && (tcomm < bound)) {
+        ay = localCinfo[tcomm - base].degree;
+        size = localCinfo[tcomm - base].size;
+      } else {
+        // is_remote, lookup map
+        std::map<GraphElem, Comm>::const_iterator citer =
+            remoteCinfo.find(tcomm);
+        ay = citer->second.degree;
+        size = citer->second.size;
+      }
+
+      eiy = tweight;
+
+      curGain = 2.0 * (eiy - eix) - 2.0 * vDegree * (ay - ax) * constant;
+
+      if ((curGain > maxGain) ||
+          ((curGain == maxGain) && (curGain != 0.0) && (tcomm < maxIndex))) {
+        maxGain = curGain;
+        maxIndex = tcomm;
+        maxSize = size;
+      }
+    }
+
+  if ((maxSize == 1) && (currSize == 1) && (maxIndex > currComm))
+    maxIndex = currComm;
+
+  return maxIndex;
+} // distGetMaxIndex
+
+// OPTIMIZATION:
+// Small numbers optimization of `distBuildLocalMapCounter`
+// Use `fakemap` instead of `unordered_map` for `clmap`
+template <int N, int R>
+GraphWeight distBuildLocalMapCounterSmall(
+    const GraphElem e0, const GraphElem e1,
+    fakemap<GraphElem, GraphWeight, N, R> &clmap, const Graph &g,
+    const std::vector<GraphElem> &currComm,
+    const std::unordered_map<GraphElem, GraphElem> &remoteComm,
+    const GraphElem vertex, const GraphElem base, const GraphElem bound,
+    const GraphElem cc, GraphWeight &ccVal) {
+  GraphWeight selfLoop = 0;
+
+  for (GraphElem j = e0; j < e1; j++) {
+    const Edge &edge = g.get_edge(j);
+    const GraphElem &tail_ = edge.tail_;
+    const GraphWeight &weight = edge.weight_;
+    GraphElem tcomm;
+
+    if (tail_ == vertex + base)
+      selfLoop += weight;
+
+    // is_local, direct access local std::vector<GraphElem>
+    if ((tail_ >= base) && (tail_ < bound))
+      tcomm = currComm[tail_ - base];
+    else { // is_remote, lookup map
+      std::unordered_map<GraphElem, GraphElem>::const_iterator iter =
+          remoteComm.find(tail_);
+
+#ifdef DEBUG_PRINTF
+      assert(iter != remoteComm.end());
+#endif
+      tcomm = iter->second;
+    }
+
+    if (tcomm == cc) {
+#ifdef EDGE_STAT
+#pragma omp atomic update
+      casesCounter[EDGE_CASE_SAME_COMMUNITY]++;
+#endif
+
+      ccVal += weight;
+      continue;
+    }
+
+#ifdef EDGE_STAT
+#pragma omp atomic update
+    casesCounter[EDGE_CASE_LOW_DEGREE]++;
+#endif
+
+    auto storedAlready = clmap.find(tcomm);
+
+    if (storedAlready)
+      storedAlready->second += weight;
+    else
+      clmap.emplace(tcomm, weight);
+  }
+
+  return selfLoop;
+} // distBuildLocalMapCounter
+
+
+// NOTE:
+// Some thresholds for different optimizations
+
+#ifndef SCC_SMALL_THRESHOLD_0
+#define SCC_SMALL_THRESHOLD_0 20
+#define SCC_SMALL_RADIX_0 1
+#endif
+#ifndef SCC_SMALL_THRESHOLD_1
+#define SCC_SMALL_THRESHOLD_1 20
+#define SCC_SMALL_RADIX_1 4
+#endif
+#ifndef SCC_SORT_THRESHOLD
+#define SCC_SORT_THRESHOLD INT64_MAX
+#endif
 
 void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::vector<GraphElem> &currComm,
 				 std::vector<GraphElem> &targetComm, const std::vector<GraphWeight> &vDegree,
@@ -283,8 +618,6 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
 {
   GraphElem localTarget = -1;
   GraphElem e0, e1, selfLoop = 0;
-  std::unordered_map<GraphElem, GraphElem> clmap;
-  std::vector<GraphWeight> counter;
 
   const GraphElem base = dg.get_base(me), bound = dg.get_bound(me);
   const GraphElem cc = currComm[i];
@@ -309,16 +642,54 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
   dg.edge_range(i, e0, e1);
 
   if (e0 != e1) {
-    clmap.insert(std::unordered_map<GraphElem, GraphElem>::value_type(cc, 0));
-    counter.push_back(0.0);
 
-    selfLoop =  distBuildLocalMapCounter(e0, e1, clmap, counter, dg, 
-                    currComm, remoteComm, i, base, bound);
+    // OPTIMIZATION:
+    // Use different optimization strategies based on `e1 - e0`
+    // Thresholds are configurable via macros
+    GraphWeight ccVal = 0;
 
-    clusterWeight[i] += counter[0];
-
-    localTarget = distGetMaxIndex(clmap, counter, selfLoop, localCinfo, remoteCinfo, 
-                    vDegree[i], ccSize, ccDegree, cc, base, bound, constantForSecondTerm);
+    if (e1 - e0 < SCC_SMALL_THRESHOLD_0) {
+      fakemap<GraphElem, GraphWeight, SCC_SMALL_THRESHOLD_0, SCC_SMALL_RADIX_0>
+          clmap;
+      selfLoop = distBuildLocalMapCounterSmall<SCC_SMALL_THRESHOLD_0,
+                                               SCC_SMALL_RADIX_0>(
+          e0, e1, clmap, dg, currComm, remoteComm, i, base, bound, cc, ccVal);
+      clusterWeight[i] += ccVal;
+      localTarget =
+          distGetMaxIndexSmall<SCC_SMALL_THRESHOLD_0, SCC_SMALL_RADIX_0>(
+              clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize,
+              ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
+    } else if (e1 - e0 < SCC_SMALL_THRESHOLD_1) {
+      fakemap<GraphElem, GraphWeight, SCC_SMALL_THRESHOLD_1, SCC_SMALL_RADIX_1>
+          clmap;
+      selfLoop = distBuildLocalMapCounterSmall<SCC_SMALL_THRESHOLD_1,
+                                               SCC_SMALL_RADIX_1>(
+          e0, e1, clmap, dg, currComm, remoteComm, i, base, bound, cc, ccVal);
+      clusterWeight[i] += ccVal;
+      localTarget =
+          distGetMaxIndexSmall<SCC_SMALL_THRESHOLD_1, SCC_SMALL_RADIX_1>(
+              clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize,
+              ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
+    } else if (e1 - e0 < SCC_SORT_THRESHOLD) {
+      static
+#ifdef _OPENMP
+          thread_local
+#endif
+          std::vector<std::pair<GraphElem, GraphWeight>>
+              clmap;
+      clmap.clear();
+      selfLoop = distBuildLocalMapCounterSort(
+          e0, e1, clmap, dg, currComm, remoteComm, i, base, bound, cc, ccVal);
+      clusterWeight[i] += ccVal;
+      localTarget = distGetMaxIndexSort(
+          clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize,
+          ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
+    } else {
+      std::unordered_map<GraphElem, GraphWeight> clmap;
+      selfLoop = distBuildLocalMapCounter(e0, e1, clmap, dg, currComm, remoteComm, i, base, bound, cc, ccVal);
+      clusterWeight[i] += ccVal;
+      localTarget = distGetMaxIndex(clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize, ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
+    }
   }
   else
     localTarget = cc;
@@ -1338,8 +1709,17 @@ GraphWeight distLouvainMethod(const int me, const int nprocs, const Graph &dg,
   while(true) {
 #ifdef DEBUG_PRINTF  
     const double t2 = MPI_Wtime();
+#endif
+    // NOTE:
+    // print wall time of each iteration
+    const double t_begin = MPI_Wtime();
+#ifdef MY_DEBUG_PRINTF
     if (me == 0)
-        std::cout << "Starting Louvain iteration: " << numIters << std::endl;
+      std::cout << "Louvain iteration: " << numIters << "; " << std::endl;
+#endif
+#ifdef EDGE_STAT
+    for (int i = 0; i < EDGE_CASE_NUM; ++i)
+      casesCounter[i] = 0;
 #endif
     numIters++;
 
@@ -1419,6 +1799,26 @@ GraphWeight distLouvainMethod(const int me, const int nprocs, const Graph &dg,
         pastComm[i] = currComm[i];
         currComm[i] = targetComm[i];
         targetComm[i] = tmp;
+    }
+    const double t_end = MPI_Wtime();
+#ifdef EDGE_STAT
+    MPI_Allreduce(MPI_IN_PLACE, casesCounter, EDGE_CASE_NUM, MPI_UNSIGNED_LONG,
+                  MPI_SUM, MPI_COMM_WORLD);
+#endif
+    if (me == 0) {
+#ifdef MY_DEBUG_PRINTF
+      std::cout << "\tcost " << t_end - t_begin << " seconds; " << std::endl;
+#endif
+#ifdef EDGE_STAT
+      // NOTE:
+      // print edge stats of each iteration
+      std::cout << "\tsame community edges: "
+                << casesCounter[EDGE_CASE_SAME_COMMUNITY] << std::endl;
+      std::cout << "\thigh degree edges: "
+                << casesCounter[EDGE_CASE_HIGH_DEGREE] << std::endl;
+      std::cout << "\tlow degree edges: " << casesCounter[EDGE_CASE_LOW_DEGREE]
+                << std::endl;
+#endif
     }
   } // end of Louvain iteration
 

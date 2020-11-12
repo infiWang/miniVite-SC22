@@ -80,7 +80,11 @@ int main(int argc, char *argv[])
 #else  
   int max_threads;
 
+#ifdef _OPENMP
   max_threads = omp_get_max_threads();
+#else
+  max_threads = 1;
+#endif
 
   if (max_threads > 1) {
       int provided;
