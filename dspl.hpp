@@ -349,7 +349,7 @@ GraphElem distGetMaxIndexSort(
   auto [tcomm, tweight] = clmap[0];
   
   // update max index using current tcomm and tweight
-  auto update = [&]() {
+  auto update = [&, &tcomm = tcomm, &tweight = tweight]() {
     // is_local, direct access local info
     if ((tcomm >= base) && (tcomm < bound)) {
       ay = localCinfo[tcomm - base].degree;
