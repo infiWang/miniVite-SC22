@@ -48,8 +48,9 @@
 #include <list>
 #include <numeric>
 #include <vector>
-#include <unordered_map>
-#include <unordered_set>
+// #include <unordered_map>
+// #include <unordered_set>
+#include "../lib/unordered_dense/include/ankerl/unordered_dense.h"
 #include <map>
 #include <utility>
 
@@ -189,9 +190,9 @@ void distInitLouvain(const Graph &dg, std::vector<GraphElem> &pastComm,
 // OPTIMIZATION:
 // counter array is merged into clmap
 // ccVal refers to counter[0] in original code
-GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphWeight> &clmap,
+GraphElem distGetMaxIndex(const ankerl::unordered_dense::map<GraphElem, GraphWeight> &clmap,
 			  const GraphWeight selfLoop, const std::vector<Comm> &localCinfo, 
-			  const std::map<GraphElem,Comm> &remoteCinfo, const GraphWeight vDegree, 
+			  const ankerl::unordered_dense::map<GraphElem,Comm> &remoteCinfo, const GraphWeight vDegree, 
                           const GraphElem currSize, const GraphWeight currDegree, const GraphElem currComm,
 			  const GraphElem base, const GraphElem bound, const GraphWeight constant, const GraphWeight ccVal)
 {
@@ -220,7 +221,7 @@ GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphWeight> &clma
     }
     else {
         // is_remote, lookup map
-        std::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(tcomm);
+        ankerl::unordered_dense::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(tcomm);
         ay = citer->second.degree;
         size = citer->second.size; 
     }
@@ -249,17 +250,17 @@ GraphElem distGetMaxIndex(const std::unordered_map<GraphElem, GraphWeight> &clma
 // OPTIMIZATION:
 // counter array is merged into clmap
 // ccVal is written into
-GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std::unordered_map<GraphElem, GraphWeight> &clmap, 
+GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, ankerl::unordered_dense::map<GraphElem, GraphWeight> &clmap, 
 				   const Graph &g, 
                                    const std::vector<GraphElem> &currComm, 
-                                   const std::unordered_map<GraphElem, GraphElem> &remoteComm,
+                                   const ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm,
 	                           const GraphElem vertex, const GraphElem base, const GraphElem bound, const GraphElem cc, GraphWeight &ccVal)
 {
   // NOTE:
   // numUniqueClusters is unused
 
   GraphWeight selfLoop = 0;
-  std::unordered_map<GraphElem, GraphWeight>::iterator storedAlready;
+  ankerl::unordered_dense::map<GraphElem, GraphWeight>::iterator storedAlready;
 
   for (GraphElem j = e0; j < e1; j++) {
         
@@ -275,7 +276,7 @@ GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std
     if ((tail_ >= base) && (tail_ < bound))
       tcomm = currComm[tail_ - base];
     else { // is_remote, lookup map
-      std::unordered_map<GraphElem, GraphElem>::const_iterator iter = remoteComm.find(tail_);
+      ankerl::unordered_dense::map<GraphElem, GraphElem>::const_iterator iter = remoteComm.find(tail_);
 
 #ifdef DEBUG_PRINTF  
       assert(iter != remoteComm.end());
@@ -307,7 +308,7 @@ GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std
     if (storedAlready != clmap.end())
       storedAlready->second += weight;
     else
-      clmap.insert(std::unordered_map<GraphElem, GraphWeight>::value_type(
+      clmap.insert(ankerl::unordered_dense::map<GraphElem, GraphWeight>::value_type(
           tcomm, weight));
   }
 
@@ -320,7 +321,7 @@ GraphWeight distBuildLocalMapCounter(const GraphElem e0, const GraphElem e1, std
 GraphElem distGetMaxIndexSort(
     const std::vector<std::pair<GraphElem, GraphWeight>> &clmap,
     const GraphWeight selfLoop, const std::vector<Comm> &localCinfo,
-    const std::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
+    const ankerl::unordered_dense::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
     const GraphElem currSize, const GraphWeight currDegree,
     const GraphElem currComm, const GraphElem base, const GraphElem bound,
     const GraphWeight constant, const GraphWeight ccVal) {
@@ -356,7 +357,7 @@ GraphElem distGetMaxIndexSort(
       size = localCinfo[tcomm - base].size;
     } else {
       // is_remote, lookup map
-      std::map<GraphElem, Comm>::const_iterator citer = remoteCinfo.find(tcomm);
+      ankerl::unordered_dense::map<GraphElem, Comm>::const_iterator citer = remoteCinfo.find(tcomm);
       ay = citer->second.degree;
       size = citer->second.size;
     }
@@ -402,7 +403,7 @@ GraphWeight distBuildLocalMapCounterSort(
     const GraphElem e0, const GraphElem e1,
     std::vector<std::pair<GraphElem, GraphWeight>> &clmap, const Graph &g,
     const std::vector<GraphElem> &currComm,
-    const std::unordered_map<GraphElem, GraphElem> &remoteComm,
+    const ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm,
     const GraphElem vertex, const GraphElem base, const GraphElem bound,
     const GraphElem cc, GraphWeight &ccVal) {
   GraphWeight selfLoop = 0;
@@ -421,7 +422,7 @@ GraphWeight distBuildLocalMapCounterSort(
     if ((tail_ >= base) && (tail_ < bound))
       tcomm = currComm[tail_ - base];
     else { // is_remote, lookup map
-      std::unordered_map<GraphElem, GraphElem>::const_iterator iter =
+      ankerl::unordered_dense::map<GraphElem, GraphElem>::const_iterator iter =
           remoteComm.find(tail_);
 
 #ifdef DEBUG_PRINTF
@@ -459,7 +460,7 @@ GraphWeight distBuildLocalMapCounterSort(
 
 // OPTIMIZATION:
 // An on-stack implementation to replace hashmap
-// implement the partial interface of std::unordered_map
+// implement the partial interface of ankerl::unordered_dense::map
 template <typename K, typename V, int N, int R = 1> struct fakemap {
   static constexpr int radix = R;
   std::array<std::array<std::pair<K, V>, N>, R> storage;
@@ -481,7 +482,7 @@ template <int N, int R>
 GraphElem distGetMaxIndexSmall(
     const fakemap<GraphElem, GraphWeight, N, R> &clmap,
     const GraphWeight selfLoop, const std::vector<Comm> &localCinfo,
-    const std::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
+    const ankerl::unordered_dense::map<GraphElem, Comm> &remoteCinfo, const GraphWeight vDegree,
     const GraphElem currSize, const GraphWeight currDegree,
     const GraphElem currComm, const GraphElem base, const GraphElem bound,
     const GraphWeight constant, const GraphWeight ccVal) {
@@ -507,7 +508,7 @@ GraphElem distGetMaxIndexSmall(
         size = localCinfo[tcomm - base].size;
       } else {
         // is_remote, lookup map
-        std::map<GraphElem, Comm>::const_iterator citer =
+        ankerl::unordered_dense::map<GraphElem, Comm>::const_iterator citer =
             remoteCinfo.find(tcomm);
         ay = citer->second.degree;
         size = citer->second.size;
@@ -539,7 +540,7 @@ GraphWeight distBuildLocalMapCounterSmall(
     const GraphElem e0, const GraphElem e1,
     fakemap<GraphElem, GraphWeight, N, R> &clmap, const Graph &g,
     const std::vector<GraphElem> &currComm,
-    const std::unordered_map<GraphElem, GraphElem> &remoteComm,
+    const ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm,
     const GraphElem vertex, const GraphElem base, const GraphElem bound,
     const GraphElem cc, GraphWeight &ccVal) {
   GraphWeight selfLoop = 0;
@@ -557,7 +558,7 @@ GraphWeight distBuildLocalMapCounterSmall(
     if ((tail_ >= base) && (tail_ < bound))
       tcomm = currComm[tail_ - base];
     else { // is_remote, lookup map
-      std::unordered_map<GraphElem, GraphElem>::const_iterator iter =
+      ankerl::unordered_dense::map<GraphElem, GraphElem>::const_iterator iter =
           remoteComm.find(tail_);
 
 #ifdef DEBUG_PRINTF
@@ -605,15 +606,19 @@ GraphWeight distBuildLocalMapCounterSmall(
 #define SCC_SMALL_RADIX_1 4
 #endif
 #ifndef SCC_SORT_THRESHOLD
+#ifdef USE_32_BIT_GRAPH
+#define SCC_SORT_THRESHOLD INT32_MAX
+#else
 #define SCC_SORT_THRESHOLD INT64_MAX
+#endif
 #endif
 
 void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::vector<GraphElem> &currComm,
 				 std::vector<GraphElem> &targetComm, const std::vector<GraphWeight> &vDegree,
                                  std::vector<Comm> &localCinfo, std::vector<Comm> &localCupdate,
-				 const std::unordered_map<GraphElem, GraphElem> &remoteComm, 
-                                 const std::map<GraphElem,Comm> &remoteCinfo, 
-                                 std::map<GraphElem,Comm> &remoteCupdate, const GraphWeight constantForSecondTerm,
+				 const ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm, 
+                                 const ankerl::unordered_dense::map<GraphElem,Comm> &remoteCinfo, 
+                                 ankerl::unordered_dense::map<GraphElem,Comm> &remoteCupdate, const GraphWeight constantForSecondTerm,
                                  std::vector<GraphWeight> &clusterWeight, const int me)
 {
   GraphElem localTarget = -1;
@@ -633,7 +638,7 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
         currCommIsLocal=true;
   } else {
   // is remote
-        std::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(cc);
+        ankerl::unordered_dense::map<GraphElem,Comm>::const_iterator citer = remoteCinfo.find(cc);
 	ccDegree = citer->second.degree;
  	ccSize = citer->second.size;
 	currCommIsLocal=false;
@@ -685,7 +690,7 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
           clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize,
           ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
     } else {
-      std::unordered_map<GraphElem, GraphWeight> clmap;
+      ankerl::unordered_dense::map<GraphElem, GraphWeight> clmap;
       selfLoop = distBuildLocalMapCounter(e0, e1, clmap, dg, currComm, remoteComm, i, base, bound, cc, ccVal);
       clusterWeight[i] += ccVal;
       localTarget = distGetMaxIndex(clmap, selfLoop, localCinfo, remoteCinfo, vDegree[i], ccSize, ccDegree, cc, base, bound, constantForSecondTerm, ccVal);
@@ -725,7 +730,7 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
         localCupdate[cc-base].size--;
  
         // search target!     
-        std::map<GraphElem,Comm>::iterator iter=remoteCupdate.find(localTarget);
+        ankerl::unordered_dense::map<GraphElem,Comm>::iterator iter=remoteCupdate.find(localTarget);
  
         #pragma omp atomic update
         iter->second.degree += vDegree[i];
@@ -741,7 +746,7 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
         localCupdate[localTarget-base].size++;
        
         // search current 
-        std::map<GraphElem,Comm>::iterator iter=remoteCupdate.find(cc);
+        ankerl::unordered_dense::map<GraphElem,Comm>::iterator iter=remoteCupdate.find(cc);
   
         #pragma omp atomic update
         iter->second.degree -= vDegree[i];
@@ -753,7 +758,7 @@ void distExecuteLouvainIteration(const GraphElem i, const Graph &dg, const std::
    if ((localTarget != cc) && (localTarget != -1) && !currCommIsLocal && !targetCommIsLocal) {
        
         // search current 
-        std::map<GraphElem,Comm>::iterator iter = remoteCupdate.find(cc);
+        ankerl::unordered_dense::map<GraphElem,Comm>::iterator iter = remoteCupdate.find(cc);
   
         #pragma omp atomic update
         iter->second.degree -= vDegree[i];
@@ -861,16 +866,16 @@ void fillRemoteCommunities(const Graph &dg, const int me, const int nprocs,
         const size_t &ssz, const size_t &rsz, const std::vector<GraphElem> &ssizes, 
         const std::vector<GraphElem> &rsizes, const std::vector<GraphElem> &svdata, 
         const std::vector<GraphElem> &rvdata, const std::vector<GraphElem> &currComm, 
-        const std::vector<Comm> &localCinfo, std::map<GraphElem,Comm> &remoteCinfo, 
-        std::unordered_map<GraphElem, GraphElem> &remoteComm, std::map<GraphElem,Comm> &remoteCupdate, 
+        const std::vector<Comm> &localCinfo, ankerl::unordered_dense::map<GraphElem,Comm> &remoteCinfo, 
+        ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm, ankerl::unordered_dense::map<GraphElem,Comm> &remoteCupdate, 
         const MPI_Win &commwin, const std::vector<GraphElem> &disp)
 #else
 void fillRemoteCommunities(const Graph &dg, const int me, const int nprocs,
         const size_t &ssz, const size_t &rsz, const std::vector<GraphElem> &ssizes, 
         const std::vector<GraphElem> &rsizes, const std::vector<GraphElem> &svdata, 
         const std::vector<GraphElem> &rvdata, const std::vector<GraphElem> &currComm, 
-        const std::vector<Comm> &localCinfo, std::map<GraphElem,Comm> &remoteCinfo, 
-        std::unordered_map<GraphElem, GraphElem> &remoteComm, std::map<GraphElem,Comm> &remoteCupdate)
+        const std::vector<Comm> &localCinfo, ankerl::unordered_dense::map<GraphElem,Comm> &remoteCinfo, 
+        ankerl::unordered_dense::map<GraphElem, GraphElem> &remoteComm, ankerl::unordered_dense::map<GraphElem,Comm> &remoteCupdate)
 #endif
 {
 #if defined(USE_MPI_RMA)
@@ -882,7 +887,7 @@ void fillRemoteCommunities(const Graph &dg, const int me, const int nprocs,
 #if defined(REPLACE_STL_UOSET_WITH_VECTOR)
   std::vector< std::vector< GraphElem > > rcinfo(nprocs);
 #else
-  std::vector<std::unordered_set<GraphElem> > rcinfo(nprocs);
+  std::vector<ankerl::unordered_dense::set<GraphElem> > rcinfo(nprocs);
 #endif
 
 #if defined(USE_MPI_SENDRECV)
@@ -1047,7 +1052,7 @@ void fillRemoteCommunities(const Graph &dg, const int me, const int nprocs,
     const GraphElem comm = rcdata[i];
 #endif
 
-    remoteComm.insert(std::unordered_map<GraphElem, GraphElem>::value_type(rvdata[i], comm));
+    remoteComm.insert(ankerl::unordered_dense::map<GraphElem, GraphElem>::value_type(rvdata[i], comm));
     const int tproc = dg.get_owner(comm);
 
     if (tproc != me)
@@ -1317,8 +1322,8 @@ void fillRemoteCommunities(const Graph &dg, const int me, const int nprocs,
       comm.size = rinfo[i].size;
       comm.degree = rinfo[i].degree;
 
-      remoteCinfo.insert(std::map<GraphElem,Comm>::value_type(ccomm, comm));
-      remoteCupdate.insert(std::map<GraphElem,Comm>::value_type(ccomm, Comm()));
+      remoteCinfo.insert(ankerl::unordered_dense::map<GraphElem,Comm>::value_type(ccomm, comm));
+      remoteCupdate.insert(ankerl::unordered_dense::map<GraphElem,Comm>::value_type(ccomm, Comm()));
   }
 } // end fillRemoteCommunities
 
@@ -1347,7 +1352,7 @@ void destroyCommunityMPIType()
 } // destroyCommunityMPIType
 
 void updateRemoteCommunities(const Graph &dg, std::vector<Comm> &localCinfo,
-			     const std::map<GraphElem,Comm> &remoteCupdate,
+			     const ankerl::unordered_dense::map<GraphElem,Comm> &remoteCupdate,
 			     const int me, const int nprocs)
 {
   const GraphElem base = dg.get_base(me), bound = dg.get_bound(me);
@@ -1356,7 +1361,7 @@ void updateRemoteCommunities(const Graph &dg, std::vector<Comm> &localCinfo,
   
   // FIXME TODO can we use TBB::concurrent_vector instead,
   // to make this parallel; first we have to get rid of maps
-  for (std::map<GraphElem,Comm>::const_iterator iter = remoteCupdate.begin(); iter != remoteCupdate.end(); iter++) {
+  for (ankerl::unordered_dense::map<GraphElem,Comm>::const_iterator iter = remoteCupdate.begin(); iter != remoteCupdate.end(); iter++) {
       const GraphElem i = iter->first;
       const Comm &curr = iter->second;
 
@@ -1495,7 +1500,7 @@ void exchangeVertexReqs(const Graph &dg, size_t &ssz, size_t &rsz,
   for (int i = 0; i < nprocs; i++)
     omp_init_lock(&locks[i]);
 #endif
-  std::vector<std::unordered_set<GraphElem>> parray(nprocs);
+  std::vector<ankerl::unordered_dense::set<GraphElem>> parray(nprocs);
 
 #ifdef USE_OPENMP_LOCK
 #pragma omp parallel default(shared), shared(dg, locks, parray), firstprivate(me)
@@ -1546,7 +1551,7 @@ void exchangeVertexReqs(const Graph &dg, size_t &ssz, size_t &rsz,
 
   int pproc = 0;
   // TODO FIXME parallelize this loop
-  for (std::vector<std::unordered_set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
+  for (std::vector<ankerl::unordered_dense::set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
     ssz += iter->size();
     ssizes[pproc] = iter->size();
     pproc++;
@@ -1576,7 +1581,7 @@ void exchangeVertexReqs(const Graph &dg, size_t &ssz, size_t &rsz,
 #if defined(USE_MPI_COLLECTIVES)
   std::vector<int> scnts(nprocs), rcnts(nprocs), sdispls(nprocs), rdispls(nprocs);
   
-  for (std::vector<std::unordered_set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
+  for (std::vector<ankerl::unordered_dense::set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
       std::copy(iter->begin(), iter->end(), svdata.begin() + cpos);
       
       scnts[pproc] = iter->size();
@@ -1606,7 +1611,7 @@ void exchangeVertexReqs(const Graph &dg, size_t &ssz, size_t &rsz,
       rpos += rsizes[i];
   }
 
-  for (std::vector<std::unordered_set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
+  for (std::vector<ankerl::unordered_dense::set<GraphElem>>::const_iterator iter = parray.begin(); iter != parray.end(); iter++) {
       std::copy(iter->begin(), iter->end(), svdata.begin() + cpos);
 
       if ((me != pproc) && (iter->size() > 0))
@@ -1659,8 +1664,8 @@ GraphWeight distLouvainMethod(const int me, const int nprocs, const Graph &dg,
   std::vector<GraphWeight> clusterWeight;
   std::vector<Comm> localCinfo, localCupdate;
  
-  std::unordered_map<GraphElem, GraphElem> remoteComm;
-  std::map<GraphElem,Comm> remoteCinfo, remoteCupdate;
+  ankerl::unordered_dense::map<GraphElem, GraphElem> remoteComm;
+  ankerl::unordered_dense::map<GraphElem,Comm> remoteCinfo, remoteCupdate;
   
   const GraphElem nv = dg.get_lnv();
   MPI_Comm gcomm = dg.get_comm();
